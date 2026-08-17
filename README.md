@@ -1,11 +1,11 @@
 # trino-sybase-release
 
-Compiled plugin bundles for the two Trino connectors built in [`trino-sybase`](https://github.com/markdedeuge/trino-sybase):
+Compiled plugin bundles for two Trino connectors:
 
 - **trino-sybase (ASE)** — Trino to Sybase ASE 16, catalog `sybase`, jTDS driver bundled.
 - **trino-sybase-iq (IQ)** — Trino to SAP IQ, catalog `sybase_iq`, no JDBC driver bundled (jConnect is loaded reflectively at runtime).
 
-This repo holds **binaries only**. Source, issues and CI live in `trino-sybase`.
+This repo holds **binaries only** — the compiled plugin bundles and their checksums.
 
 ## What the connectors do
 
@@ -19,19 +19,20 @@ Both push work **down into the database** so the engine does it instead of the w
 
 ## Benchmark highlights
 
-Measured on a federated stack (one ASE, two Postgres, one baked 5M SAP IQ) with one 49-shape query battery run on all eight topologies; every result is diffed against the Postgres baseline. Full methodology and the complete matrix live in the source repo: **[`docs/pushdown-bench-483.md`](https://github.com/markdedeuge/trino-sybase/blob/main/docs/pushdown-bench-483.md)** (per-topology source-rows + warm ON wall-clock `mean ± std`) and **[`docs/benchmarks.md`](https://github.com/markdedeuge/trino-sybase/blob/main/docs/benchmarks.md)**.
+Measured on a federated stack (one ASE 16, two Postgres, one baked 5M SAP IQ) with one 49-shape query battery run on all eight topologies; every result is diffed against a stock-Postgres baseline. The complete per-topology matrix — source-rows collapse plus warm ON wall-clock (`mean ± std` over 12 runs) — is bundled in this repo: **[`docs/pushdown-bench-483.md`](docs/pushdown-bench-483.md)**.
 
 - **Correct, then fast.** `abs Δ vs Postgres = 0` on **47 of 49 shapes** — byte-identical results; only `stddev_pop`/`var_pop` drift (`~1e-11`, floating-point summation order, ~10⁶× inside the `1e-7` tolerance). Pushdown collapses source rows without ever changing the answer.
-- **Source rows read, ON vs OFF** (fact = 5,000,000 rows):
+- **Source rows read collapse** (fact = 5,000,000 rows): pushed filters, aggregates and joins mean Trino pulls only a fraction across the wire — aggregate-over-join and `stddev_pop`/`var_pop` fold **5,000,000 → 1**; a cross-process dynamic filter cuts **5,000,000 → 25,250**.
+- **Wall-clock time benefit** — OFF = pushdown disabled, ON = enabled; drawn from the bundled matrix:
 
-  | Query shape | Rows OFF → ON | Reduction |
-  |---|---|--:|
-  | `count(*)` / aggregate over join | 5,000,000 → 1 | up to 5,000,000× |
-  | indexed `WHERE acct_id = 42` (FULL predicate) | 5,000,000 → 100 | 50,000× |
-  | dynamic-filter fact ⋈ dim | 5,000,000 → 25,250 | 198× |
-  | `sum(int*int)` / `var_pop` (folded here, not by stock PG) | 100k / 5M → 1 | — |
+  | Query shape | Engine | Source rows OFF → ON | Wall-clock OFF → ON | Speed-up |
+  |---|---|--:|--:|--:|
+  | aggregate over join | IQ | 5.0M → 1 | 5,500 ms → 144 ms | ~38× |
+  | dynamic filter, int band | ASE | 5.0M → 1 | 1,270 ms → 30 ms | ~42× |
+  | dynamic filter, fact ⋈ dim | ASE + PG | 5.0M → 25,250 | 1,410 ms → 48 ms | ~29× |
+  | star join, 2 FULL dims | ASE | 5.0M → 1 | 1,430 ms → 56 ms | ~26× |
 
-- **Warm planning + execution.** Each cell is warmed and the ON wall-clock is the trimmed `mean ± std` over 12 runs. Warm planning is single-digit ms; pushed queries run in tens of ms on the IQ column store (e.g. an aggregate-over-join folds to ~145 ms on IQ vs a tens-of-seconds row-store scan on ASE — the pushdown is identical; the wall-clock is the engine, not the connector). See the committed matrix for every shape's exact `mean ± std`.
+- **Rows are the gate; wall-clock reports.** On a row-store engine a source-rows fold is not always a wall-clock win — the same aggregate-over-join folds 5,000,000 → 1 yet stays ~30 s on ASE (it scans the fact regardless), while IQ's column store runs the identical pushed query in ~144 ms. The pushdown is identical; the wall-clock is the engine. See [the full matrix](docs/pushdown-bench-483.md) for every shape's `mean ± std`.
 
 ## Releases
 
@@ -39,7 +40,7 @@ Measured on a federated stack (one ASE, two Postgres, one baked 5M SAP IQ) with 
 - Tags are driver-scoped so the two connectors release independently:
   - `ase-vX.Y.Z` → the ASE zips (`trino-sybase-480.zip`, `trino-sybase-483.zip`).
   - `iq-vX.Y.Z` → the IQ zips (`trino-sybase-iq-480.zip`, `trino-sybase-iq-483.zip`).
-- The same release is also published in the source repo; this repo is the dedicated distribution point.
+- This repo is the dedicated distribution point for the compiled bundles.
 
 Pick the zip that matches your Trino version.
 
@@ -61,7 +62,7 @@ The IQ connector needs jConnect (`jconn4`, proprietary SAP, not redistributable)
 
 ## Provenance
 
-Every bundle passes `scripts/provenance.sh` in the source repo before release:
+Every bundle passes a provenance / license gate before release:
 
 - versioned zip that unpacks to a matching `trino-sybase[-iq]-<target>/` directory;
 - jConnect is never bundled by either driver;
@@ -72,4 +73,4 @@ Every bundle passes `scripts/provenance.sh` in the source repo before release:
 
 ## License
 
-Apache-2.0, matching the source project. See the `LICENSE`/`NOTICE` shipped inside each zip.
+Apache-2.0. See the `LICENSE`/`NOTICE` shipped inside each zip.

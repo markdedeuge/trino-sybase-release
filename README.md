@@ -5,7 +5,7 @@ Compiled plugin bundles for two Trino connectors:
 - **trino-sybase (ASE)** — Trino to Sybase ASE 16, catalog `sybase`, jTDS driver bundled.
 - **trino-sybase-iq (IQ)** — Trino to SAP IQ, catalog `sybase_iq`, no JDBC driver bundled (jConnect is loaded reflectively at runtime).
 
-This repo holds **binaries only** — the compiled plugin bundles and their checksums.
+This repo holds the compiled plugin bundles and their checksums, plus the SEP deployment scripts under [`bin/`](bin/) — no source.
 
 ## What the connectors do
 
@@ -15,7 +15,9 @@ Both push work **down into the database** so the engine does it instead of the w
 - **Aggregation pushdown** — `count`/`sum`/`avg`/`min`/`max`, numeric `count(DISTINCT)`, and `stddev`/`variance`. Both connectors fold integer-arithmetic and statistical aggregates (`sum(a*b)`, `var_pop`, `stddev_pop`) that the stock `trino-postgresql` connector leaves un-pushed.
 - **Join pushdown** — cost-gated `AUTOMATIC` equi-joins over pushable keys, sized from connector-owned catalog statistics with no data scan (ASE `sysstatistics` density; IQ `sp_iqindexmetadata` FP-dictionary NDV).
 - **Dynamic filtering** — build-side keys pushed into the 5M-row fact scan at runtime, collapsing it before rows cross the wire.
-- **Char/collation pushdowns** — char predicate/join/`GROUP BY`/TopN under an opt-in `CASE_SENSITIVE` mode.
+- **Char/collation pushdowns** — byte-exact char predicate/join/`GROUP BY`/TopN. **On by default on IQ**; on ASE they are enabled by the opt-in `CASE_SENSITIVE` mode.
+
+The IQ connector can also switch specific keys to SAP IQ's own case-/collation-insensitive rules. For those opt-in result-rule modes (D / E / F) and the `system.query` pass-through, see **[`docs/advanced-usage.md`](docs/advanced-usage.md)**.
 
 ## Benchmark highlights
 
@@ -55,8 +57,14 @@ Pick the zip that matches your Trino version.
    ```bash
    unzip trino-sybase-483.zip -d "$TRINO_HOME/plugin/"
    ```
-4. Add a catalog properties file, e.g. `etc/catalog/sybase.properties` (ASE) or `sybase_iq.properties` (IQ), with the connector name and JDBC URL.
-5. Restart the Trino coordinator and workers.
+4. **Starburst Enterprise (SEP) only** — SEP checks the plugin's compiled version against the server and refuses a mismatch (`SPI version 480-e.2.89 does not match the version 483 connector was compiled for`). Use the zip whose base matches the server's Trino base — the `480` zip for a `480-e.*` server, the `483` zip for `483-e.*` — then stamp it to the server's exact version and confirm it links:
+   ```bash
+   cd "$TRINO_HOME/plugin/sybase"
+   ./bin/spi-adopt.sh --server-lib "$TRINO_HOME/lib"
+   ```
+   The scripts ship **inside the plugin zip** under `bin/`, so they are already there after unzip. This stamps the version markers and runs the linkage check (`0` = stamped and links, `1` = do not start Trino). Re-run per node and per SEP build; details in [`bin/README.md`](bin/README.md). Community Trino needs no stamping.
+5. Add a catalog properties file, e.g. `etc/catalog/sybase.properties` (ASE) or `sybase_iq.properties` (IQ), with the connector name and JDBC URL.
+6. Restart the Trino coordinator and workers.
 
 The IQ connector needs jConnect (`jconn4`, proprietary SAP, not redistributable) on the plugin classpath at runtime — supply it yourself. The ASE connector ships jTDS and needs no extra driver.
 
